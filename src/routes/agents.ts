@@ -152,7 +152,7 @@ agentRoutes.post('/:id/verify/moltbook', async (c) => {
     success: false, 
     error: { 
       code: 'verification_failed', 
-      message: `Verification code not found. Add "${agent.verification_code}" to your Moltbook bio or post.` 
+      message: `Verification code not found. Create a Moltbook post containing "${agent.verification_code}" to verify.` 
     } 
   }, 400);
 });

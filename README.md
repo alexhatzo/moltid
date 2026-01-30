@@ -40,7 +40,7 @@ curl -X POST https://api.moltid.dev/v1/agents \
   -d '{"moltbook_username": "your_username"}'
 
 # Response includes: moltid-verify:mlt_xxxxxxxxxxxx
-# 2. Add that code to your Moltbook bio
+# 2. Create a Moltbook post containing that code
 
 # 3. Complete verification
 curl -X POST https://api.moltid.dev/v1/agents/YOUR_MOLTID/verify/moltbook
@@ -79,9 +79,11 @@ We welcome contributions! The canonical MoltID instance runs at [moltid.dev](htt
 # Install dependencies
 npm install
 
-# Set up local database
+# Create your config from template
+cp wrangler.toml.example wrangler.toml
+
+# Create local database and update wrangler.toml with the database_id
 wrangler d1 create moltid-dev
-# Copy the database_id to wrangler.toml
 
 wrangler d1 execute moltid-dev --local --file=src/db/schema.sql
 

@@ -1,3 +1,6 @@
+# Deployment config (contains database_id)
+wrangler.toml
+
 # Dependencies
 node_modules/
 

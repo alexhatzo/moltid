@@ -179,7 +179,7 @@ export class AgentService {
   }
 
   /**
-   * Verify an agent's Moltbook profile by checking for the verification code.
+   * Verify an agent's Moltbook profile by checking for the verification code in a post.
    * @param agent - The agent to verify
    * @returns Verification result with verified status and karma if successful
    */
@@ -189,22 +189,16 @@ export class AgentService {
     }
     
     try {
-      // Try to fetch Moltbook profile via API
+      // Fetch user's karma from profile API
       const profileResponse = await fetch(
         `https://www.moltbook.com/api/v1/users/${agent.moltbook_username}`,
         { headers: { 'User-Agent': 'MoltID/1.0' } }
       );
       
-      if (!profileResponse.ok) {
-        // Fallback: try scraping the profile page
-        return this.verifyMoltbookFallback(agent);
-      }
-      
-      const profile = await profileResponse.json() as { bio?: string; karma?: number };
-      
-      // Check bio for verification code
-      if (profile.bio?.includes(agent.verification_code)) {
-        return { verified: true, karma: profile.karma || 0 };
+      let karma = 0;
+      if (profileResponse.ok) {
+        const profile = await profileResponse.json() as { karma?: number };
+        karma = profile.karma || 0;
       }
       
       // Check recent posts for verification code
@@ -213,12 +207,15 @@ export class AgentService {
         { headers: { 'User-Agent': 'MoltID/1.0' } }
       );
       
-      if (postsResponse.ok) {
-        const posts = await postsResponse.json() as Array<{ content?: string }>;
-        for (const post of posts) {
-          if (post.content?.includes(agent.verification_code)) {
-            return { verified: true, karma: profile.karma || 0 };
-          }
+      if (!postsResponse.ok) {
+        // Fallback: try scraping the profile page for posts
+        return this.verifyMoltbookFallback(agent);
+      }
+      
+      const posts = await postsResponse.json() as Array<{ content?: string }>;
+      for (const post of posts) {
+        if (post.content?.includes(agent.verification_code)) {
+          return { verified: true, karma };
         }
       }
       
@@ -230,13 +227,14 @@ export class AgentService {
   }
 
   /**
-   * Fallback verification method that scrapes the Moltbook profile page.
+   * Fallback verification method that scrapes the Moltbook profile page for posts.
    * Used when the API is unavailable.
    */
   private async verifyMoltbookFallback(agent: Agent): Promise<{ verified: boolean; karma?: number }> {
     try {
+      // Fetch the user's posts page
       const response = await fetch(
-        `https://www.moltbook.com/u/${agent.moltbook_username}`,
+        `https://www.moltbook.com/u/${agent.moltbook_username}/posts`,
         { headers: { 'User-Agent': 'MoltID/1.0' } }
       );
       
@@ -244,6 +242,7 @@ export class AgentService {
       
       const html = await response.text();
       
+      // Check if verification code appears in posts section
       if (html.includes(agent.verification_code!)) {
         // Try to extract karma from page
         const karmaMatch = html.match(/karma[:\s]*(\d+)/i);
