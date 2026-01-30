@@ -1,6 +1,27 @@
 import { nanoid } from 'nanoid';
 import type { Agent, AgentCreateInput, AgentPublic } from '../types';
 
+// Timeout for Moltbook API requests (300 seconds to handle slow responses)
+const MOLTBOOK_TIMEOUT_MS = 300000;
+
+/**
+ * Fetch with timeout using AbortController
+ */
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number = MOLTBOOK_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    return response;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 /**
  * AgentService handles all CRUD operations and search for MoltID agents.
  * Uses D1 (Cloudflare's SQLite) as the backing store.
@@ -180,6 +201,7 @@ export class AgentService {
 
   /**
    * Verify an agent's Moltbook profile by checking for the verification code in a post.
+   * Uses Moltbook's public API: https://www.moltbook.com/skill.md
    * @param agent - The agent to verify
    * @returns Verification result with verified status and karma if successful
    */
@@ -188,71 +210,54 @@ export class AgentService {
       return { verified: false };
     }
     
+    // Use Moltbook's profile API which includes recent posts
+    const url = `https://www.moltbook.com/api/v1/agents/profile?name=${encodeURIComponent(agent.moltbook_username)}`;
+    
     try {
-      // Fetch user's karma from profile API
-      const profileResponse = await fetch(
-        `https://www.moltbook.com/api/v1/users/${agent.moltbook_username}`,
+      console.log(`Verifying Moltbook user: ${agent.moltbook_username}`);
+      console.log(`Looking for code: ${agent.verification_code}`);
+      console.log(`Fetching: ${url}`);
+      
+      const response = await fetchWithTimeout(
+        url,
         { headers: { 'User-Agent': 'MoltID/1.0' } }
       );
       
-      let karma = 0;
-      if (profileResponse.ok) {
-        const profile = await profileResponse.json() as { karma?: number };
-        karma = profile.karma || 0;
+      if (!response.ok) {
+        console.error(`Moltbook API failed with status: ${response.status}`);
+        return { verified: false };
       }
+      
+      const data = await response.json() as {
+        success: boolean;
+        agent?: { karma?: number };
+        recentPosts?: Array<{ content?: string; title?: string }>;
+      };
+      
+      if (!data.success) {
+        console.error('Moltbook API returned success: false');
+        return { verified: false };
+      }
+      
+      const karma = data.agent?.karma || 0;
+      console.log(`Agent karma: ${karma}`);
       
       // Check recent posts for verification code
-      const postsResponse = await fetch(
-        `https://www.moltbook.com/api/v1/users/${agent.moltbook_username}/posts?limit=10`,
-        { headers: { 'User-Agent': 'MoltID/1.0' } }
-      );
+      const posts = data.recentPosts || [];
+      console.log(`Checking ${posts.length} recent posts`);
       
-      if (!postsResponse.ok) {
-        // Fallback: try scraping the profile page for posts
-        return this.verifyMoltbookFallback(agent);
-      }
-      
-      const posts = await postsResponse.json() as Array<{ content?: string }>;
       for (const post of posts) {
-        if (post.content?.includes(agent.verification_code)) {
+        if (post.content?.includes(agent.verification_code) || 
+            post.title?.includes(agent.verification_code)) {
+          console.log('Verification code found in post!');
           return { verified: true, karma };
         }
       }
       
+      console.log('Verification code not found in recent posts');
       return { verified: false };
     } catch (error) {
       console.error('Moltbook verification error:', error);
-      return this.verifyMoltbookFallback(agent);
-    }
-  }
-
-  /**
-   * Fallback verification method that scrapes the Moltbook profile page for posts.
-   * Used when the API is unavailable.
-   */
-  private async verifyMoltbookFallback(agent: Agent): Promise<{ verified: boolean; karma?: number }> {
-    try {
-      // Fetch the user's posts page
-      const response = await fetch(
-        `https://www.moltbook.com/u/${agent.moltbook_username}/posts`,
-        { headers: { 'User-Agent': 'MoltID/1.0' } }
-      );
-      
-      if (!response.ok) return { verified: false };
-      
-      const html = await response.text();
-      
-      // Check if verification code appears in posts section
-      if (html.includes(agent.verification_code!)) {
-        // Try to extract karma from page
-        const karmaMatch = html.match(/karma[:\s]*(\d+)/i);
-        const karma = karmaMatch ? parseInt(karmaMatch[1]) : 0;
-        return { verified: true, karma };
-      }
-      
-      return { verified: false };
-    } catch (error) {
-      console.error('Moltbook fallback verification error:', error);
       return { verified: false };
     }
   }
