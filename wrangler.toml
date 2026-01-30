@@ -1,0 +1,20 @@
+# MoltID API - Cloudflare Workers Configuration
+#
+# This is the configuration template. The production deployment
+# is managed by the maintainers at moltid.dev.
+#
+# For local development, create your own D1 database:
+#   wrangler d1 create moltid-dev
+# Then update database_id below.
+
+name = "moltid-api"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "moltid"
+database_id = "YOUR_DATABASE_ID"  # Create with: wrangler d1 create moltid-dev
+
+[vars]
+ENVIRONMENT = "development"
