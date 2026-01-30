@@ -1,0 +1,14 @@
+# MoltID API - Test Configuration
+# Used by vitest for running tests (in-memory database, no real D1 connection)
+
+name = "moltid-api-test"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "moltid-test"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[vars]
+ENVIRONMENT = "test"

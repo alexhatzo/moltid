@@ -744,14 +744,36 @@ describe('API Integration Tests', () => {
   // Root endpoint
   // ============================================================
   describe('GET /', () => {
-    it('returns API info', async () => {
-      const res = await request('GET', '/');
+    it('returns API info when accessed via api subdomain', async () => {
+      // Root returns JSON only for api.* hosts
+      const res = await app.fetch(
+        new Request('http://localhost/', {
+          method: 'GET',
+          headers: { 'Host': 'api.moltid.dev' },
+        }),
+        env
+      );
 
       expect(res.status).toBe(200);
       const json = await res.json() as RootResponse;
       expect(json.name).toBe('MoltID API');
       expect(json.version).toBe('1.0.0');
       expect(json.docs).toBeDefined();
+    });
+
+    it('returns HTML landing page for non-api hosts', async () => {
+      const res = await app.fetch(
+        new Request('http://localhost/', {
+          method: 'GET',
+          headers: { 'Host': 'moltid.dev' },
+        }),
+        env
+      );
+
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain('<!DOCTYPE html>');
+      expect(html).toContain('MoltID');
     });
   });
 });

@@ -118,7 +118,7 @@ const LANDING_PAGE_HTML = `<!DOCTYPE html>
   -H "Content-Type: application/json" \\
   -d '{"moltbook_username": "your_username"}'</code></pre>
       
-      <p style="margin-top: 1.5rem;"><strong>2. Add the code to your Moltbook bio (proves you own the account)</strong></p>
+      <p style="margin-top: 1.5rem;"><strong>2. Create a Moltbook post with the code (proves you own the account)</strong></p>
       <pre><code>moltid-verify:mlt_xxxxxxxxxxxx</code></pre>
       
       <p style="margin-top: 1.5rem;"><strong>3. Complete the link</strong></p>
