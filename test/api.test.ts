@@ -241,6 +241,178 @@ describe('API Integration Tests', () => {
   });
 
   // ============================================================
+  // PATCH /v1/agents/:id - Update agent capabilities
+  // ============================================================
+  describe('PATCH /v1/agents/:id', () => {
+    it('updates capabilities with valid auth (200)', async () => {
+      // Create agent with API key
+      const createRes = await request('POST', '/v1/agents', {
+        capabilities: ['old_capability'],
+      });
+      const createJson = await createRes.json() as ApiResponse<AgentPublic> & { api_key?: string };
+      const agentId = createJson.data!.id;
+      const apiKey = createJson.api_key!;
+
+      // Update capabilities
+      const res = await request('PATCH', `/v1/agents/${agentId}`, {
+        capabilities: ['new_capability', 'testing'],
+      }, {
+        headers: { 'Authorization': `Bearer ${apiKey}` },
+      });
+
+      expect(res.status).toBe(200);
+      const json = await res.json() as ApiResponse<AgentPublic>;
+      expect(json.success).toBe(true);
+      expect(json.data!.capabilities).toEqual(['new_capability', 'testing']);
+    });
+
+    it('returns 401 without auth header', async () => {
+      // Create agent
+      const createRes = await request('POST', '/v1/agents', {});
+      const createJson = await createRes.json() as ApiResponse<AgentPublic>;
+      const agentId = createJson.data!.id;
+
+      // Try to update without auth
+      const res = await request('PATCH', `/v1/agents/${agentId}`, {
+        capabilities: ['testing'],
+      });
+
+      expect(res.status).toBe(401);
+      const json = await res.json() as ErrorResponse;
+      expect(json.success).toBe(false);
+      expect(json.error.code).toBe('UNAUTHORIZED');
+    });
+
+    it('returns 401 with invalid API key', async () => {
+      // Create agent
+      const createRes = await request('POST', '/v1/agents', {});
+      const createJson = await createRes.json() as ApiResponse<AgentPublic>;
+      const agentId = createJson.data!.id;
+
+      // Try to update with wrong key
+      const res = await request('PATCH', `/v1/agents/${agentId}`, {
+        capabilities: ['testing'],
+      }, {
+        headers: { 'Authorization': 'Bearer moltid_key_invalidkey0000000000000' },
+      });
+
+      expect(res.status).toBe(401);
+      const json = await res.json() as ErrorResponse;
+      expect(json.success).toBe(false);
+      expect(json.error.code).toBe('UNAUTHORIZED');
+    });
+
+    it('returns 401 when using another agents API key', async () => {
+      // Create two agents
+      const agent1Res = await request('POST', '/v1/agents', {});
+      const agent1Json = await agent1Res.json() as ApiResponse<AgentPublic> & { api_key?: string };
+      const agent1Key = agent1Json.api_key!;
+
+      const agent2Res = await request('POST', '/v1/agents', {});
+      const agent2Json = await agent2Res.json() as ApiResponse<AgentPublic>;
+      const agent2Id = agent2Json.data!.id;
+
+      // Try to update agent2 with agent1's key
+      const res = await request('PATCH', `/v1/agents/${agent2Id}`, {
+        capabilities: ['testing'],
+      }, {
+        headers: { 'Authorization': `Bearer ${agent1Key}` },
+      });
+
+      expect(res.status).toBe(401);
+      const json = await res.json() as ErrorResponse;
+      expect(json.success).toBe(false);
+      expect(json.error.code).toBe('UNAUTHORIZED');
+    });
+
+    it('returns 400 for invalid capabilities (too many)', async () => {
+      // Create agent
+      const createRes = await request('POST', '/v1/agents', {});
+      const createJson = await createRes.json() as ApiResponse<AgentPublic> & { api_key?: string };
+      const agentId = createJson.data!.id;
+      const apiKey = createJson.api_key!;
+
+      // Try to set too many capabilities
+      const tooManyCapabilities = Array.from({ length: 21 }, (_, i) => `cap_${i}`);
+      const res = await request('PATCH', `/v1/agents/${agentId}`, {
+        capabilities: tooManyCapabilities,
+      }, {
+        headers: { 'Authorization': `Bearer ${apiKey}` },
+      });
+
+      expect(res.status).toBe(400);
+      const json = await res.json() as ErrorResponse;
+      expect(json.success).toBe(false);
+      expect(json.error.code).toBe('validation_error');
+      expect(json.error.message).toContain('exceed 20 items');
+    });
+
+    it('returns 400 for invalid capability characters', async () => {
+      // Create agent
+      const createRes = await request('POST', '/v1/agents', {});
+      const createJson = await createRes.json() as ApiResponse<AgentPublic> & { api_key?: string };
+      const agentId = createJson.data!.id;
+      const apiKey = createJson.api_key!;
+
+      // Try to set capability with invalid characters
+      const res = await request('PATCH', `/v1/agents/${agentId}`, {
+        capabilities: ['Invalid-Capability'],
+      }, {
+        headers: { 'Authorization': `Bearer ${apiKey}` },
+      });
+
+      expect(res.status).toBe(400);
+      const json = await res.json() as ErrorResponse;
+      expect(json.success).toBe(false);
+      expect(json.error.code).toBe('validation_error');
+      expect(json.error.message).toContain('invalid characters');
+    });
+
+    it('returns 400 for duplicate capabilities', async () => {
+      // Create agent
+      const createRes = await request('POST', '/v1/agents', {});
+      const createJson = await createRes.json() as ApiResponse<AgentPublic> & { api_key?: string };
+      const agentId = createJson.data!.id;
+      const apiKey = createJson.api_key!;
+
+      // Try to set duplicate capabilities
+      const res = await request('PATCH', `/v1/agents/${agentId}`, {
+        capabilities: ['testing', 'testing'],
+      }, {
+        headers: { 'Authorization': `Bearer ${apiKey}` },
+      });
+
+      expect(res.status).toBe(400);
+      const json = await res.json() as ErrorResponse;
+      expect(json.success).toBe(false);
+      expect(json.error.code).toBe('validation_error');
+      expect(json.error.message).toContain('duplicates');
+    });
+
+    it('can set empty capabilities array', async () => {
+      // Create agent with capabilities
+      const createRes = await request('POST', '/v1/agents', {
+        capabilities: ['old_capability'],
+      });
+      const createJson = await createRes.json() as ApiResponse<AgentPublic> & { api_key?: string };
+      const agentId = createJson.data!.id;
+      const apiKey = createJson.api_key!;
+
+      // Clear capabilities
+      const res = await request('PATCH', `/v1/agents/${agentId}`, {
+        capabilities: [],
+      }, {
+        headers: { 'Authorization': `Bearer ${apiKey}` },
+      });
+
+      expect(res.status).toBe(200);
+      const json = await res.json() as ApiResponse<AgentPublic>;
+      expect(json.success).toBe(true);
+      expect(json.data!.capabilities).toEqual([]);
+    });
+  });
+
+  // ============================================================
   // GET /v1/agents/moltbook/:username - Get agent by Moltbook username
   // ============================================================
   describe('GET /v1/agents/moltbook/:username', () => {

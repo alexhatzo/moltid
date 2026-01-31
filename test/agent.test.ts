@@ -747,6 +747,171 @@ describe('AgentService', () => {
     });
   });
 
+  // ============================================================
+  // validateApiKey() tests
+  // ============================================================
+  describe('validateApiKey', () => {
+    it('returns true for valid API key', async () => {
+      const { agent, apiKey } = await agentService.create({});
+
+      const isValid = await agentService.validateApiKey(agent.id, apiKey);
+
+      expect(isValid).toBe(true);
+    });
+
+    it('returns false for invalid API key', async () => {
+      const { agent } = await agentService.create({});
+
+      const isValid = await agentService.validateApiKey(agent.id, 'moltid_key_wrongkey000000000000000');
+
+      expect(isValid).toBe(false);
+    });
+
+    it('returns false for non-existent agent', async () => {
+      const isValid = await agentService.validateApiKey('mlt_nonexistent123', 'moltid_key_anykey00000000000000000');
+
+      expect(isValid).toBe(false);
+    });
+
+    it('returns false when agent has no API key hash', async () => {
+      // Create agent directly in DB without API key
+      const agentId = await createTestAgent(env.DB, {
+        api_key_hash: null,
+        api_key_prefix: null,
+      });
+
+      const isValid = await agentService.validateApiKey(agentId, 'moltid_key_anykey00000000000000000');
+
+      expect(isValid).toBe(false);
+    });
+
+    it('is timing-safe (validates hash correctly)', async () => {
+      const { agent, apiKey } = await agentService.create({});
+
+      // Valid key should work
+      expect(await agentService.validateApiKey(agent.id, apiKey)).toBe(true);
+
+      // Similar but different key should fail
+      const wrongKey = apiKey.slice(0, -1) + 'X';
+      expect(await agentService.validateApiKey(agent.id, wrongKey)).toBe(false);
+
+      // Completely different key should fail
+      expect(await agentService.validateApiKey(agent.id, 'completely_different_key')).toBe(false);
+    });
+  });
+
+  // ============================================================
+  // updateCapabilities() tests
+  // ============================================================
+  describe('updateCapabilities', () => {
+    it('updates capabilities with valid input', async () => {
+      const { agent } = await agentService.create({});
+
+      const updated = await agentService.updateCapabilities(agent.id, ['testing', 'code_review']);
+
+      expect(updated).not.toBeNull();
+      expect(updated!.capabilities).toEqual(['testing', 'code_review']);
+    });
+
+    it('returns null for non-existent agent', async () => {
+      const result = await agentService.updateCapabilities('mlt_nonexistent123', ['testing']);
+
+      expect(result).toBeNull();
+    });
+
+    it('accepts empty capabilities array', async () => {
+      const { agent } = await agentService.create({ capabilities: ['old_capability'] });
+
+      const updated = await agentService.updateCapabilities(agent.id, []);
+
+      expect(updated).not.toBeNull();
+      expect(updated!.capabilities).toEqual([]);
+    });
+
+    it('rejects more than 20 capabilities', async () => {
+      const { agent } = await agentService.create({});
+      const tooManyCapabilities = Array.from({ length: 21 }, (_, i) => `cap_${i}`);
+
+      await expect(
+        agentService.updateCapabilities(agent.id, tooManyCapabilities)
+      ).rejects.toThrow('Capabilities array cannot exceed 20 items');
+    });
+
+    it('rejects capabilities longer than 50 characters', async () => {
+      const { agent } = await agentService.create({});
+      const longCapability = 'a'.repeat(51);
+
+      await expect(
+        agentService.updateCapabilities(agent.id, [longCapability])
+      ).rejects.toThrow('exceeds maximum length of 50 characters');
+    });
+
+    it('rejects capabilities with invalid characters (uppercase)', async () => {
+      const { agent } = await agentService.create({});
+
+      await expect(
+        agentService.updateCapabilities(agent.id, ['Invalid_Capability'])
+      ).rejects.toThrow('contains invalid characters');
+    });
+
+    it('rejects capabilities with invalid characters (spaces)', async () => {
+      const { agent } = await agentService.create({});
+
+      await expect(
+        agentService.updateCapabilities(agent.id, ['invalid capability'])
+      ).rejects.toThrow('contains invalid characters');
+    });
+
+    it('rejects capabilities with invalid characters (special chars)', async () => {
+      const { agent } = await agentService.create({});
+
+      await expect(
+        agentService.updateCapabilities(agent.id, ['invalid-capability'])
+      ).rejects.toThrow('contains invalid characters');
+    });
+
+    it('rejects duplicate capabilities', async () => {
+      const { agent } = await agentService.create({});
+
+      await expect(
+        agentService.updateCapabilities(agent.id, ['testing', 'testing'])
+      ).rejects.toThrow('contains duplicates');
+    });
+
+    it('accepts valid capabilities (lowercase, digits, underscore)', async () => {
+      const { agent } = await agentService.create({});
+
+      const updated = await agentService.updateCapabilities(agent.id, [
+        'code_review',
+        'testing123',
+        'ml_model_v2',
+      ]);
+
+      expect(updated).not.toBeNull();
+      expect(updated!.capabilities).toEqual(['code_review', 'testing123', 'ml_model_v2']);
+    });
+
+    it('accepts exactly 20 capabilities', async () => {
+      const { agent } = await agentService.create({});
+      const validCapabilities = Array.from({ length: 20 }, (_, i) => `capability_${i}`);
+
+      const updated = await agentService.updateCapabilities(agent.id, validCapabilities);
+
+      expect(updated).not.toBeNull();
+      expect(updated!.capabilities.length).toBe(20);
+    });
+
+    it('accepts capability with exactly 50 characters', async () => {
+      const { agent } = await agentService.create({});
+      const fiftyCharCapability = 'a'.repeat(50);
+
+      const updated = await agentService.updateCapabilities(agent.id, [fiftyCharCapability]);
+
+      expect(updated).not.toBeNull();
+      expect(updated!.capabilities).toEqual([fiftyCharCapability]);
+    });
+  });
+
   describe('toPublic', () => {
     it('hides sensitive fields', () => {
       const agent = {

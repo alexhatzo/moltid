@@ -281,6 +281,8 @@ describe('TrustService', () => {
         vouch_count: 1,
         status: 'active' as const,
         verification_code: null,
+        api_key_hash: null,
+        api_key_prefix: null,
         created_at: fiveDaysAgo.toISOString(),
         updated_at: new Date().toISOString(),
       };
@@ -309,6 +311,8 @@ describe('TrustService', () => {
         vouch_count: 0,
         status: 'pending' as const,
         verification_code: null,
+        api_key_hash: null,
+        api_key_prefix: null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
@@ -336,6 +340,8 @@ describe('TrustService', () => {
         vouch_count: 20, // 20 * 5 = 100, should cap at 30
         status: 'active' as const,
         verification_code: null,
+        api_key_hash: null,
+        api_key_prefix: null,
         created_at: longAgo.toISOString(), // 100 days, should cap at 20
         updated_at: new Date().toISOString(),
       };
@@ -360,6 +366,8 @@ describe('TrustService', () => {
         vouch_count: 0,
         status: 'active' as const,
         verification_code: null,
+        api_key_hash: null,
+        api_key_prefix: null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };

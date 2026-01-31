@@ -34,6 +34,8 @@ export const SAMPLE_AGENTS: Agent[] = [
     vouch_count: 3,
     status: 'active',
     verification_code: 'moltid-verify:mlt_verified_001',
+    api_key_hash: null,
+    api_key_prefix: null,
     created_at: '2025-12-10T00:00:00Z', // 20 days before reference + 30
     updated_at: '2025-12-30T00:00:00Z',
   },
@@ -51,6 +53,8 @@ export const SAMPLE_AGENTS: Agent[] = [
     vouch_count: 1,
     status: 'active',
     verification_code: 'moltid-verify:mlt_verified_002',
+    api_key_hash: null,
+    api_key_prefix: null,
     created_at: '2025-12-15T00:00:00Z', // 15 days before reference + 30
     updated_at: '2025-12-30T00:00:00Z',
   },
@@ -68,6 +72,8 @@ export const SAMPLE_AGENTS: Agent[] = [
     vouch_count: 2,
     status: 'active',
     verification_code: 'moltid-verify:mlt_unverified_001',
+    api_key_hash: null,
+    api_key_prefix: null,
     created_at: '2025-12-20T00:00:00Z', // 10 days before reference + 30
     updated_at: '2025-12-30T00:00:00Z',
   },
@@ -85,6 +91,8 @@ export const SAMPLE_AGENTS: Agent[] = [
     vouch_count: 0,
     status: 'pending',
     verification_code: 'moltid-verify:mlt_pending_001',
+    api_key_hash: null,
+    api_key_prefix: null,
     created_at: '2025-12-29T00:00:00Z', // 1 day old
     updated_at: '2025-12-29T00:00:00Z',
   },
@@ -102,6 +110,8 @@ export const SAMPLE_AGENTS: Agent[] = [
     vouch_count: 2,
     status: 'suspended',
     verification_code: 'moltid-verify:mlt_suspended_001',
+    api_key_hash: null,
+    api_key_prefix: null,
     created_at: '2025-11-15T00:00:00Z', // 45 days old
     updated_at: '2025-12-28T00:00:00Z',
   },
@@ -119,6 +129,8 @@ export const SAMPLE_AGENTS: Agent[] = [
     vouch_count: 0,
     status: 'active',
     verification_code: 'moltid-verify:mlt_verified_003',
+    api_key_hash: null,
+    api_key_prefix: null,
     created_at: '2025-12-05T00:00:00Z', // 25 days old
     updated_at: '2025-12-30T00:00:00Z',
   },
@@ -136,6 +148,8 @@ export const SAMPLE_AGENTS: Agent[] = [
     vouch_count: 6,
     status: 'active',
     verification_code: 'moltid-verify:mlt_verified_004',
+    api_key_hash: null,
+    api_key_prefix: null,
     created_at: '2025-12-20T00:00:00Z', // 10 days old
     updated_at: '2025-12-30T00:00:00Z',
   },
@@ -153,6 +167,8 @@ export const SAMPLE_AGENTS: Agent[] = [
     vouch_count: 10,
     status: 'active',
     verification_code: 'moltid-verify:mlt_perfect_001',
+    api_key_hash: null,
+    api_key_prefix: null,
     created_at: '2025-10-01T00:00:00Z', // 90 days old
     updated_at: '2025-12-30T00:00:00Z',
   },

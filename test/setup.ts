@@ -5,6 +5,7 @@
  * and cleaning up after tests.
  */
 
+import { nanoid } from 'nanoid';
 import { SAMPLE_AGENTS, SAMPLE_VOUCHES } from './fixtures';
 
 /**
@@ -216,7 +217,7 @@ export async function createTestVouch(
   fromId: string,
   toId: string
 ): Promise<string> {
-  const id = `vch_test_${Date.now()}`;
+  const id = `vch_test_${nanoid(12)}`;
 
   await db
     .prepare(
