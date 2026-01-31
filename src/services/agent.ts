@@ -327,4 +327,84 @@ export class AgentService {
       created_at: agent.created_at,
     };
   }
+
+  /**
+   * Validate an API key for a given agent using timing-safe comparison.
+   * Prevents timing attacks by using constant-time hash comparison.
+   * @param agentId - The agent's MoltID
+   * @param apiKey - The plaintext API key to validate
+   * @returns true if the API key is valid, false otherwise
+   */
+  async validateApiKey(agentId: string, apiKey: string): Promise<boolean> {
+    const agent = await this.getById(agentId);
+    
+    // Return false if agent doesn't exist or has no API key hash
+    if (!agent || !agent.api_key_hash) {
+      return false;
+    }
+    
+    // Hash the provided API key
+    const providedHash = await hashApiKey(apiKey);
+    
+    // Use timing-safe comparison to prevent timing attacks
+    // Both hashes are hex strings of equal length (SHA-256 = 64 hex chars)
+    const encoder = new TextEncoder();
+    const storedHashBytes = encoder.encode(agent.api_key_hash);
+    const providedHashBytes = encoder.encode(providedHash);
+    
+    // Length check (should always be equal for SHA-256 hex strings)
+    if (storedHashBytes.byteLength !== providedHashBytes.byteLength) {
+      return false;
+    }
+    
+    // Constant-time comparison using Cloudflare Workers' crypto.subtle.timingSafeEqual
+    return crypto.subtle.timingSafeEqual(storedHashBytes, providedHashBytes);
+  }
+
+  /**
+   * Update an agent's capabilities with validation.
+   * @param id - The agent's MoltID
+   * @param capabilities - Array of capability strings to set
+   * @returns The updated agent or null if not found
+   * @throws Error if validation fails (max 20 items, lowercase a-z0-9_ only, max 50 chars each, no duplicates)
+   */
+  async updateCapabilities(id: string, capabilities: string[]): Promise<Agent | null> {
+    // Validation: max 20 items
+    if (capabilities.length > 20) {
+      throw new Error('Capabilities array cannot exceed 20 items');
+    }
+    
+    // Validation regex: lowercase a-z, digits 0-9, underscore only
+    const validCapabilityPattern = /^[a-z0-9_]+$/;
+    
+    for (const capability of capabilities) {
+      // Validation: max 50 characters
+      if (capability.length > 50) {
+        throw new Error(`Capability "${capability}" exceeds maximum length of 50 characters`);
+      }
+      
+      // Validation: allowed characters only
+      if (!validCapabilityPattern.test(capability)) {
+        throw new Error(`Capability "${capability}" contains invalid characters. Only lowercase a-z, digits 0-9, and underscore are allowed`);
+      }
+    }
+    
+    // Validation: no duplicates
+    const uniqueCapabilities = new Set(capabilities);
+    if (uniqueCapabilities.size !== capabilities.length) {
+      throw new Error('Capabilities array contains duplicates');
+    }
+    
+    // Check if agent exists
+    const agent = await this.getById(id);
+    if (!agent) {
+      return null;
+    }
+    
+    // Update capabilities using the existing update method
+    await this.update(id, { capabilities });
+    
+    // Return the updated agent
+    return await this.getById(id);
+  }
 }
