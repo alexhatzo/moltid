@@ -85,12 +85,15 @@ describe('API Integration Tests', () => {
       const res = await request('POST', '/v1/agents', {});
 
       expect(res.status).toBe(201);
-      const json = await res.json() as ApiResponse<AgentPublic>;
+      const json = await res.json() as ApiResponse<AgentPublic> & { api_key?: string };
       expect(json.success).toBe(true);
       expect(json.data).toBeDefined();
       expect(json.data!.id).toMatch(/^mlt_/);
       expect(json.data!.status).toBe('pending');
       expect(json.data!.trust_score).toBe(0);
+      // API key should be returned on registration
+      expect(json.api_key).toBeDefined();
+      expect(json.api_key).toMatch(/^moltid_key_[a-zA-Z0-9_-]{32}$/);
     });
 
     it('creates agent with moltbook username (201)', async () => {

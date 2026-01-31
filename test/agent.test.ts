@@ -42,7 +42,7 @@ describe('AgentService', () => {
         capabilities: ['testing', 'code_review'],
       };
 
-      const agent = await agentService.create(input);
+      const { agent, apiKey } = await agentService.create(input);
 
       expect(agent).toBeDefined();
       expect(agent.moltbook_username).toBe('test_user');
@@ -52,22 +52,35 @@ describe('AgentService', () => {
       expect(agent.moltbook_verified).toBe(false);
       expect(agent.trust_score).toBe(0);
       expect(agent.vouch_count).toBe(0);
+      // Verify API key format
+      expect(apiKey).toMatch(/^moltid_key_[a-zA-Z0-9_-]{32}$/);
     });
 
     it('generates correct ID format (mlt_xxx)', async () => {
-      const agent = await agentService.create({});
+      const { agent } = await agentService.create({});
 
       expect(agent.id).toMatch(/^mlt_[a-zA-Z0-9_-]{12}$/);
     });
 
     it('generates verification code (moltid-verify:xxx)', async () => {
-      const agent = await agentService.create({});
+      const { agent } = await agentService.create({});
 
       expect(agent.verification_code).toBe(`moltid-verify:${agent.id}`);
     });
 
+    it('generates API key and stores hash', async () => {
+      const { agent, apiKey } = await agentService.create({});
+
+      // API key should have correct format
+      expect(apiKey).toMatch(/^moltid_key_[a-zA-Z0-9_-]{32}$/);
+      // Hash should be stored (64 char hex for SHA-256)
+      expect(agent.api_key_hash).toMatch(/^[a-f0-9]{64}$/);
+      // Prefix should be first 16 chars of API key
+      expect(agent.api_key_prefix).toBe(apiKey.substring(0, 16));
+    });
+
     it('handles optional fields - minimal input', async () => {
-      const agent = await agentService.create({});
+      const { agent } = await agentService.create({});
 
       expect(agent.moltbook_username).toBeNull();
       expect(agent.public_key).toBeNull();
@@ -75,7 +88,7 @@ describe('AgentService', () => {
     });
 
     it('handles optional fields - only moltbook_username', async () => {
-      const agent = await agentService.create(VALID_AGENT_INPUTS.withMoltbook);
+      const { agent } = await agentService.create(VALID_AGENT_INPUTS.withMoltbook);
 
       expect(agent.moltbook_username).toBe('test_user');
       expect(agent.public_key).toBeNull();
@@ -83,7 +96,7 @@ describe('AgentService', () => {
     });
 
     it('handles optional fields - only public_key', async () => {
-      const agent = await agentService.create(VALID_AGENT_INPUTS.withPublicKey);
+      const { agent } = await agentService.create(VALID_AGENT_INPUTS.withPublicKey);
 
       expect(agent.moltbook_username).toBeNull();
       expect(agent.public_key).toBe('pk_test_key_12345');
@@ -91,7 +104,7 @@ describe('AgentService', () => {
     });
 
     it('handles optional fields - only capabilities', async () => {
-      const agent = await agentService.create(VALID_AGENT_INPUTS.withCapabilities);
+      const { agent } = await agentService.create(VALID_AGENT_INPUTS.withCapabilities);
 
       expect(agent.moltbook_username).toBeNull();
       expect(agent.public_key).toBeNull();
@@ -99,7 +112,7 @@ describe('AgentService', () => {
     });
 
     it('handles complete input with all fields', async () => {
-      const agent = await agentService.create(VALID_AGENT_INPUTS.complete);
+      const { agent } = await agentService.create(VALID_AGENT_INPUTS.complete);
 
       expect(agent.moltbook_username).toBe('complete_agent');
       expect(agent.public_key).toBe('pk_complete_key_67890');
@@ -107,7 +120,7 @@ describe('AgentService', () => {
     });
 
     it('sets created_at and updated_at timestamps', async () => {
-      const agent = await agentService.create({});
+      const { agent } = await agentService.create({});
 
       expect(agent.created_at).toBeDefined();
       expect(agent.updated_at).toBeDefined();
@@ -132,7 +145,7 @@ describe('AgentService', () => {
   describe('getById', () => {
     it('returns agent when found', async () => {
       // Create a test agent first
-      const createdAgent = await agentService.create({
+      const { agent: createdAgent } = await agentService.create({
         moltbook_username: 'findme_user',
         capabilities: ['testing'],
       });
@@ -390,7 +403,7 @@ describe('AgentService', () => {
   // ============================================================
   describe('update', () => {
     it('updates moltbook_verified field', async () => {
-      const agent = await agentService.create({});
+      const { agent } = await agentService.create({});
 
       await agentService.update(agent.id, { moltbook_verified: true });
 
@@ -399,7 +412,7 @@ describe('AgentService', () => {
     });
 
     it('updates moltbook_karma field', async () => {
-      const agent = await agentService.create({});
+      const { agent } = await agentService.create({});
 
       await agentService.update(agent.id, { moltbook_karma: 1500 });
 
@@ -408,7 +421,7 @@ describe('AgentService', () => {
     });
 
     it('updates trust_score field', async () => {
-      const agent = await agentService.create({});
+      const { agent } = await agentService.create({});
 
       await agentService.update(agent.id, { trust_score: 75 });
 
@@ -417,7 +430,7 @@ describe('AgentService', () => {
     });
 
     it('updates vouch_count field', async () => {
-      const agent = await agentService.create({});
+      const { agent } = await agentService.create({});
 
       await agentService.update(agent.id, { vouch_count: 5 });
 
@@ -426,7 +439,7 @@ describe('AgentService', () => {
     });
 
     it('updates status field', async () => {
-      const agent = await agentService.create({});
+      const { agent } = await agentService.create({});
 
       await agentService.update(agent.id, { status: 'active' });
 
@@ -435,7 +448,7 @@ describe('AgentService', () => {
     });
 
     it('updates capabilities field', async () => {
-      const agent = await agentService.create({});
+      const { agent } = await agentService.create({});
 
       await agentService.update(agent.id, {
         capabilities: ['new_capability', 'another'],
@@ -446,7 +459,7 @@ describe('AgentService', () => {
     });
 
     it('updates public_key field', async () => {
-      const agent = await agentService.create({});
+      const { agent } = await agentService.create({});
 
       await agentService.update(agent.id, { public_key: 'pk_new_key_456' });
 
@@ -455,7 +468,7 @@ describe('AgentService', () => {
     });
 
     it('updates multiple fields at once', async () => {
-      const agent = await agentService.create({});
+      const { agent } = await agentService.create({});
 
       await agentService.update(agent.id, {
         moltbook_verified: true,
@@ -470,7 +483,7 @@ describe('AgentService', () => {
     });
 
     it('updates updated_at timestamp', async () => {
-      const agent = await agentService.create({});
+      const { agent } = await agentService.create({});
       const originalUpdatedAt = agent.updated_at;
 
       // Small delay to ensure timestamp difference
@@ -483,7 +496,7 @@ describe('AgentService', () => {
     });
 
     it('does nothing when no fields provided', async () => {
-      const agent = await agentService.create({
+      const { agent } = await agentService.create({
         moltbook_username: 'unchanged_user',
       });
 
@@ -610,6 +623,8 @@ describe('AgentService', () => {
         vouch_count: 3,
         status: 'active',
         verification_code: 'moltid-verify:mlt_test123',
+        api_key_hash: 'abc123def456',
+        api_key_prefix: 'moltid_key_abcd',
         created_at: '2025-01-01T00:00:00Z',
         updated_at: '2025-01-15T00:00:00Z',
       };
@@ -626,6 +641,8 @@ describe('AgentService', () => {
       expect(agent.vouch_count).toBe(3);
       expect(agent.status).toBe('active');
       expect(agent.verification_code).toBe('moltid-verify:mlt_test123');
+      expect(agent.api_key_hash).toBe('abc123def456');
+      expect(agent.api_key_prefix).toBe('moltid_key_abcd');
       expect(agent.created_at).toBe('2025-01-01T00:00:00Z');
       expect(agent.updated_at).toBe('2025-01-15T00:00:00Z');
     });
@@ -642,6 +659,8 @@ describe('AgentService', () => {
         vouch_count: 0,
         status: 'pending',
         verification_code: null,
+        api_key_hash: null,
+        api_key_prefix: null,
         created_at: '2025-01-01T00:00:00Z',
         updated_at: '2025-01-01T00:00:00Z',
       };
@@ -663,6 +682,8 @@ describe('AgentService', () => {
         vouch_count: 0,
         status: 'pending',
         verification_code: null,
+        api_key_hash: null,
+        api_key_prefix: null,
         created_at: '2025-01-01T00:00:00Z',
         updated_at: '2025-01-01T00:00:00Z',
       };
@@ -674,6 +695,8 @@ describe('AgentService', () => {
       expect(agent.public_key).toBeNull();
       expect(agent.capabilities).toEqual([]); // Defaults to empty array
       expect(agent.verification_code).toBeNull();
+      expect(agent.api_key_hash).toBeNull();
+      expect(agent.api_key_prefix).toBeNull();
     });
 
     it('handles empty capabilities string', () => {
@@ -688,6 +711,8 @@ describe('AgentService', () => {
         vouch_count: 0,
         status: 'pending',
         verification_code: null,
+        api_key_hash: null,
+        api_key_prefix: null,
         created_at: '2025-01-01T00:00:00Z',
         updated_at: '2025-01-01T00:00:00Z',
       };
@@ -709,6 +734,8 @@ describe('AgentService', () => {
         vouch_count: null,
         status: 'pending',
         verification_code: null,
+        api_key_hash: null,
+        api_key_prefix: null,
         created_at: '2025-01-01T00:00:00Z',
         updated_at: '2025-01-01T00:00:00Z',
       };
@@ -733,6 +760,8 @@ describe('AgentService', () => {
         vouch_count: 5,
         status: 'active' as const,
         verification_code: 'moltid-verify:mlt_public_test', // Sensitive
+        api_key_hash: 'abc123def456', // Sensitive - should be hidden
+        api_key_prefix: 'moltid_key_abcd', // Sensitive - should be hidden
         created_at: '2025-01-01T00:00:00Z',
         updated_at: '2025-01-15T00:00:00Z', // Sensitive
       };
@@ -753,6 +782,8 @@ describe('AgentService', () => {
       expect(publicAgent).not.toHaveProperty('moltbook_karma');
       expect(publicAgent).not.toHaveProperty('public_key');
       expect(publicAgent).not.toHaveProperty('verification_code');
+      expect(publicAgent).not.toHaveProperty('api_key_hash');
+      expect(publicAgent).not.toHaveProperty('api_key_prefix');
       expect(publicAgent).not.toHaveProperty('updated_at');
     });
 
@@ -768,6 +799,8 @@ describe('AgentService', () => {
         vouch_count: 0,
         status: 'pending' as const,
         verification_code: 'moltid-verify:mlt_preserve_test',
+        api_key_hash: null,
+        api_key_prefix: null,
         created_at: '2025-01-01T00:00:00Z',
         updated_at: '2025-01-01T00:00:00Z',
       };

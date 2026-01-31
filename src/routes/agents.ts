@@ -31,8 +31,12 @@ agentRoutes.post('/', zValidator('json', createAgentSchema), async (c) => {
   const agentService = new AgentService(c.env.DB);
   
   try {
-    const agent = await agentService.create(input);
-    return c.json({ success: true, data: agent }, 201);
+    const { agent, apiKey } = await agentService.create(input);
+    return c.json({ 
+      success: true, 
+      data: agentService.toPublic(agent),
+      api_key: apiKey,  // Only returned once at registration
+    }, 201);
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     if (errorMessage.includes('UNIQUE constraint')) {

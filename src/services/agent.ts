@@ -1,5 +1,19 @@
 import { nanoid } from 'nanoid';
-import type { Agent, AgentCreateInput, AgentPublic } from '../types';
+import type { Agent, AgentCreateInput, AgentPublic, AgentRegistrationResult } from '../types';
+
+/**
+ * Hash an API key using SHA-256 via Web Crypto API.
+ * Returns the hash as a hex string.
+ * @param apiKey - The plaintext API key to hash
+ * @returns Hex-encoded SHA-256 hash
+ */
+async function hashApiKey(apiKey: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(apiKey);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
 
 // Timeout for Moltbook API requests (300 seconds to handle slow responses)
 const MOLTBOOK_TIMEOUT_MS = 300000;
@@ -30,27 +44,35 @@ export class AgentService {
   constructor(private db: D1Database) {}
 
   /**
-   * Create a new agent with auto-generated ID and verification code.
+   * Create a new agent with auto-generated ID, verification code, and API key.
    * @param input - Agent creation input (moltbook_username, public_key, capabilities)
-   * @returns The created agent
+   * @returns The created agent and plaintext API key (only returned once)
    */
-  async create(input: AgentCreateInput): Promise<Agent> {
+  async create(input: AgentCreateInput): Promise<AgentRegistrationResult> {
     const id = `mlt_${nanoid(12)}`;
     const verification_code = `moltid-verify:${id}`;
     const capabilities = JSON.stringify(input.capabilities || []);
     
+    // Generate API key in format: moltid_key_{nanoid(32)}
+    const apiKey = `moltid_key_${nanoid(32)}`;
+    const api_key_hash = await hashApiKey(apiKey);
+    const api_key_prefix = apiKey.substring(0, 16);
+    
     await this.db.prepare(`
-      INSERT INTO agents (id, moltbook_username, public_key, capabilities, verification_code)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO agents (id, moltbook_username, public_key, capabilities, verification_code, api_key_hash, api_key_prefix)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `).bind(
       id,
       input.moltbook_username || null,
       input.public_key || null,
       capabilities,
-      verification_code
+      verification_code,
+      api_key_hash,
+      api_key_prefix
     ).run();
     
-    return this.getById(id) as Promise<Agent>;
+    const agent = await this.getById(id) as Agent;
+    return { agent, apiKey };
   }
 
   /**
@@ -281,6 +303,8 @@ export class AgentService {
       vouch_count: (r.vouch_count as number) || 0,
       status: r.status as 'pending' | 'active' | 'suspended',
       verification_code: r.verification_code as string | null,
+      api_key_hash: r.api_key_hash as string | null,
+      api_key_prefix: r.api_key_prefix as string | null,
       created_at: r.created_at as string,
       updated_at: r.updated_at as string,
     };
