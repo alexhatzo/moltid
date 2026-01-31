@@ -79,62 +79,6 @@ const requireAgentAuth = createMiddleware<AgentRouteEnv>(async (c, next) => {
   await next();
 });
 
-/**
- * Flexible authentication middleware that looks up the agent by API key.
- * Unlike requireAgentAuth, this doesn't require the agent ID in the route.
- * Used for endpoints where the caller authenticates as any agent (e.g., vouch).
- * 
- * Requires:
- * - Authorization header with format: "Bearer <api_key>"
- * 
- * On success, sets `authenticatedAgentId` in context to the agent owning the key.
- */
-const requireApiKeyAuth = createMiddleware<AgentRouteEnv>(async (c, next) => {
-  const authHeader = c.req.header('Authorization');
-  
-  // Check for missing Authorization header
-  if (!authHeader) {
-    return c.json({
-      success: false,
-      error: {
-        code: 'UNAUTHORIZED',
-        message: 'Missing Authorization header',
-      },
-    }, 401);
-  }
-  
-  // Check for valid Bearer token format
-  if (!authHeader.startsWith('Bearer ')) {
-    return c.json({
-      success: false,
-      error: {
-        code: 'UNAUTHORIZED',
-        message: 'Invalid Authorization header format. Expected: Bearer <token>',
-      },
-    }, 401);
-  }
-  
-  const token = authHeader.slice(7); // Remove "Bearer " prefix
-  
-  // Look up the agent by API key
-  const agentService = new AgentService(c.env.DB);
-  const agent = await agentService.getByApiKey(token);
-  
-  if (!agent) {
-    return c.json({
-      success: false,
-      error: {
-        code: 'UNAUTHORIZED',
-        message: 'Invalid or expired API key',
-      },
-    }, 401);
-  }
-  
-  // Store authenticated agent ID in context for downstream handlers
-  c.set('authenticatedAgentId', agent.id);
-  await next();
-});
-
 // Validation schemas
 const createAgentSchema = z.object({
   moltbook_username: z.string().min(1).max(64).optional(),
@@ -142,9 +86,9 @@ const createAgentSchema = z.object({
   capabilities: z.array(z.string()).optional(),
 });
 
-// Schema for vouch endpoint - from_agent_id now comes from authenticated context
-// BREAKING CHANGE: from_agent_id removed from body, now derived from auth
+// Schema for vouch endpoint - from_agent_id is required in body
 const vouchSchema = z.object({
+  from_agent_id: z.string().min(1), // MoltID format: mlt_xxxxxxxxxxxx
   signature: z.string().optional(), // For future key-based auth
 });
 
@@ -336,13 +280,38 @@ agentRoutes.get('/:id/trust', async (c) => {
 });
 
 // POST /v1/agents/:id/vouch - Vouch for an agent
-// BREAKING CHANGE (v1.1): Requires authentication. from_agent_id is now derived from
-// the authenticated agent, not from request body. The :id param is the agent being vouched for.
-agentRoutes.post('/:id/vouch', requireApiKeyAuth, zValidator('json', vouchSchema), async (c) => {
+// Requires authentication via Bearer token validated against from_agent_id
+agentRoutes.post('/:id/vouch', zValidator('json', vouchSchema), async (c) => {
   const toId = c.req.param('id');
-  // from_agent_id is now derived from authenticated context (BREAKING CHANGE)
-  const from_agent_id = c.get('authenticatedAgentId');
+  const { from_agent_id } = c.req.valid('json');
+  
+  // Validate auth - require Bearer token
+  const authHeader = c.req.header('Authorization');
+  if (!authHeader?.startsWith('Bearer ')) {
+    return c.json({
+      success: false,
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Missing or invalid Authorization header. Expected: Bearer <token>',
+      },
+    }, 401);
+  }
+  const token = authHeader.slice(7);
+  
   const agentService = new AgentService(c.env.DB);
+  
+  // Validate the API key against the from_agent_id
+  const isValid = await agentService.validateApiKey(from_agent_id, token);
+  if (!isValid) {
+    return c.json({
+      success: false,
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Invalid API key',
+      },
+    }, 401);
+  }
+  
   const trustService = new TrustService(c.env.DB);
   
   // Verify voucher exists and is verified
@@ -397,4 +366,4 @@ agentRoutes.post('/:id/vouch', requireApiKeyAuth, zValidator('json', vouchSchema
   }
 });
 
-export { agentRoutes, requireAgentAuth, requireApiKeyAuth };
+export { agentRoutes, requireAgentAuth };

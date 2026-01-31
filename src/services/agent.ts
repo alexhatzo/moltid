@@ -362,51 +362,6 @@ export class AgentService {
   }
 
   /**
-   * Find an agent by their API key.
-   * Uses the API key prefix to narrow the search, then verifies the full hash.
-   * @param apiKey - The plaintext API key to look up
-   * @returns The agent if found and key is valid, null otherwise
-   */
-  async getByApiKey(apiKey: string): Promise<Agent | null> {
-    // Extract prefix from the API key (first 16 characters)
-    const prefix = apiKey.substring(0, 16);
-    
-    // Find agents with matching prefix
-    const results = await this.db.prepare(
-      'SELECT * FROM agents WHERE api_key_prefix = ?'
-    ).bind(prefix).all();
-    
-    if (!results.results || results.results.length === 0) {
-      return null;
-    }
-    
-    // Hash the provided API key
-    const providedHash = await hashApiKey(apiKey);
-    const encoder = new TextEncoder();
-    const providedHashBytes = encoder.encode(providedHash);
-    
-    // Check each candidate (should typically be just one due to prefix uniqueness)
-    for (const row of results.results) {
-      const agent = this.parseAgent(row);
-      if (!agent.api_key_hash) continue;
-      
-      const storedHashBytes = encoder.encode(agent.api_key_hash);
-      
-      // Length check
-      if (storedHashBytes.byteLength !== providedHashBytes.byteLength) {
-        continue;
-      }
-      
-      // Timing-safe comparison
-      if (crypto.subtle.timingSafeEqual(storedHashBytes, providedHashBytes)) {
-        return agent;
-      }
-    }
-    
-    return null;
-  }
-
-  /**
    * Update an agent's capabilities with validation.
    * @param id - The agent's MoltID
    * @param capabilities - Array of capability strings to set

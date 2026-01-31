@@ -533,8 +533,10 @@ describe('API Integration Tests', () => {
        status: 'active',
      });
 
-     // Authenticate as the voucher (from_agent_id no longer in body)
-     const res = await request('POST', `/v1/agents/${targetId}/vouch`, {}, {
+     // Authenticate as the voucher with from_agent_id in body
+     const res = await request('POST', `/v1/agents/${targetId}/vouch`, {
+       from_agent_id: voucherId,
+     }, {
        headers: { 'Authorization': `Bearer ${voucherApiKey}` },
      });
 
@@ -563,8 +565,10 @@ describe('API Integration Tests', () => {
         status: 'active',
       });
 
-      // Authenticate as the unverified voucher
-      const res = await request('POST', `/v1/agents/${targetId}/vouch`, {}, {
+      // Authenticate as the unverified voucher with from_agent_id in body
+      const res = await request('POST', `/v1/agents/${targetId}/vouch`, {
+        from_agent_id: unverifiedId,
+      }, {
         headers: { 'Authorization': `Bearer ${unverifiedApiKey}` },
       });
 
@@ -587,8 +591,10 @@ describe('API Integration Tests', () => {
         api_key_prefix: selfApiKey.substring(0, 16),
       });
 
-      // Try to vouch for yourself by authenticating as yourself
-      const res = await request('POST', `/v1/agents/${agentId}/vouch`, {}, {
+      // Try to vouch for yourself with from_agent_id in body
+      const res = await request('POST', `/v1/agents/${agentId}/vouch`, {
+        from_agent_id: agentId,
+      }, {
         headers: { 'Authorization': `Bearer ${selfApiKey}` },
       });
 
@@ -617,13 +623,17 @@ describe('API Integration Tests', () => {
         status: 'active',
       });
 
-      // First vouch
-      await request('POST', `/v1/agents/${targetId}/vouch`, {}, {
+      // First vouch with from_agent_id in body
+      await request('POST', `/v1/agents/${targetId}/vouch`, {
+        from_agent_id: voucherId,
+      }, {
         headers: { 'Authorization': `Bearer ${dupVoucherApiKey}` },
       });
 
-      // Second vouch (duplicate)
-      const res = await request('POST', `/v1/agents/${targetId}/vouch`, {}, {
+      // Second vouch (duplicate) with from_agent_id in body
+      const res = await request('POST', `/v1/agents/${targetId}/vouch`, {
+        from_agent_id: voucherId,
+      }, {
         headers: { 'Authorization': `Bearer ${dupVoucherApiKey}` },
       });
 
@@ -645,7 +655,9 @@ describe('API Integration Tests', () => {
         api_key_prefix: voucher404ApiKey.substring(0, 16),
       });
 
-      const res = await request('POST', '/v1/agents/mlt_nonexistent_999/vouch', {}, {
+      const res = await request('POST', '/v1/agents/mlt_nonexistent_999/vouch', {
+        from_agent_id: 'mlt_voucher_404',
+      }, {
         headers: { 'Authorization': `Bearer ${voucher404ApiKey}` },
       });
 
@@ -662,8 +674,17 @@ describe('API Integration Tests', () => {
         status: 'active',
       });
 
-      // Try with an invalid API key
-      const res = await request('POST', `/v1/agents/${targetId}/vouch`, {}, {
+      // Create a voucher agent (but we'll use wrong API key)
+      const voucherId = await createTestAgent(env.DB, {
+        id: 'mlt_voucher_wrong_key',
+        moltbook_verified: true,
+        status: 'active',
+      });
+
+      // Try with an invalid API key (key doesn't match from_agent_id)
+      const res = await request('POST', `/v1/agents/${targetId}/vouch`, {
+        from_agent_id: voucherId,
+      }, {
         headers: { 'Authorization': 'Bearer moltid_key_invalidkey0000000000000' },
       });
 
@@ -699,8 +720,10 @@ describe('API Integration Tests', () => {
       const beforeJson = await beforeRes.json() as ApiResponse<TrustDetails>;
       const beforeScore = beforeJson.data!.score;
 
-      // Add vouch (authenticated as the voucher)
-      const vouchRes = await request('POST', `/v1/agents/${targetId}/vouch`, {}, {
+      // Add vouch (authenticated as the voucher with from_agent_id in body)
+      const vouchRes = await request('POST', `/v1/agents/${targetId}/vouch`, {
+        from_agent_id: 'mlt_score_voucher',
+      }, {
         headers: { 'Authorization': `Bearer ${scoreVoucherApiKey}` },
       });
       const vouchJson = await vouchRes.json() as ApiResponse<VouchResponse>;
