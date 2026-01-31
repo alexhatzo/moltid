@@ -5,13 +5,79 @@
  */
 
 import { Hono } from 'hono';
+import { createMiddleware } from 'hono/factory';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { AgentService } from '../services/agent';
 import { TrustService } from '../services/trust';
 import type { Env } from '../types';
 
-const agentRoutes = new Hono<{ Bindings: Env }>();
+// Extended environment type with context variables for authenticated routes
+type AgentRouteEnv = {
+  Bindings: Env;
+  Variables: {
+    authenticatedAgentId: string;
+  };
+};
+
+const agentRoutes = new Hono<AgentRouteEnv>();
+
+/**
+ * Authentication middleware for agent routes.
+ * Validates API key from Authorization header against the agent ID in the route.
+ * 
+ * Requires:
+ * - Authorization header with format: "Bearer <api_key>"
+ * - Route parameter :id matching the agent the key belongs to
+ * 
+ * On success, sets `authenticatedAgentId` in context.
+ */
+const requireAgentAuth = createMiddleware<AgentRouteEnv>(async (c, next) => {
+  const authHeader = c.req.header('Authorization');
+  
+  // Check for missing Authorization header
+  if (!authHeader) {
+    return c.json({
+      success: false,
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Missing Authorization header',
+      },
+    }, 401);
+  }
+  
+  // Check for valid Bearer token format
+  if (!authHeader.startsWith('Bearer ')) {
+    return c.json({
+      success: false,
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Invalid Authorization header format. Expected: Bearer <token>',
+      },
+    }, 401);
+  }
+  
+  const token = authHeader.slice(7); // Remove "Bearer " prefix
+  const agentId = c.req.param('id');
+  
+  // Validate the API key against the agent
+  const agentService = new AgentService(c.env.DB);
+  const isValid = await agentService.validateApiKey(agentId, token);
+  
+  if (!isValid) {
+    return c.json({
+      success: false,
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Invalid or expired API key',
+      },
+    }, 401);
+  }
+  
+  // Store authenticated agent ID in context for downstream handlers
+  c.set('authenticatedAgentId', agentId);
+  await next();
+});
 
 // Validation schemas
 const createAgentSchema = z.object({
@@ -35,7 +101,8 @@ agentRoutes.post('/', zValidator('json', createAgentSchema), async (c) => {
     return c.json({ 
       success: true, 
       data: agentService.toPublic(agent),
-      api_key: apiKey,  // Only returned once at registration
+      api_key: apiKey,
+      api_key_warning: 'Store this key securely. It will not be shown again.',
     }, 201);
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -238,4 +305,4 @@ agentRoutes.post('/:id/vouch', zValidator('json', vouchSchema), async (c) => {
   }
 });
 
-export { agentRoutes };
+export { agentRoutes, requireAgentAuth };
