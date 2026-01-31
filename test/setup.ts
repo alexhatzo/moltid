@@ -5,6 +5,7 @@
  * and cleaning up after tests.
  */
 
+import { nanoid } from 'nanoid';
 import { SAMPLE_AGENTS, SAMPLE_VOUCHES } from './fixtures';
 
 /**
@@ -23,6 +24,8 @@ CREATE TABLE IF NOT EXISTS agents (
     vouch_count INTEGER DEFAULT 0,
     status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'suspended')),
     verification_code TEXT,
+    api_key_hash TEXT,
+    api_key_prefix TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
 );
@@ -84,8 +87,8 @@ export async function seedTestData(
           `INSERT INTO agents (
             id, moltbook_username, moltbook_verified, moltbook_karma,
             public_key, capabilities, trust_score, vouch_count, status,
-            verification_code, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            verification_code, api_key_hash, api_key_prefix, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .bind(
           agent.id,
@@ -98,6 +101,8 @@ export async function seedTestData(
           agent.vouch_count,
           agent.status,
           agent.verification_code,
+          null, // api_key_hash - not set for seeded test data
+          null, // api_key_prefix - not set for seeded test data
           agent.created_at,
           agent.updated_at
         )
@@ -162,6 +167,8 @@ export async function createTestAgent(
     vouch_count: number;
     status: 'pending' | 'active' | 'suspended';
     verification_code: string | null;
+    api_key_hash: string | null;
+    api_key_prefix: string | null;
     created_at: string;
   }> = {}
 ): Promise<string> {
@@ -173,8 +180,8 @@ export async function createTestAgent(
       `INSERT INTO agents (
         id, moltbook_username, moltbook_verified, moltbook_karma,
         public_key, capabilities, trust_score, vouch_count, status,
-        verification_code, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        verification_code, api_key_hash, api_key_prefix, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .bind(
       id,
@@ -187,6 +194,8 @@ export async function createTestAgent(
       overrides.vouch_count ?? 0,
       overrides.status ?? 'pending',
       overrides.verification_code ?? `moltid-verify:${id}`,
+      overrides.api_key_hash ?? null,
+      overrides.api_key_prefix ?? null,
       overrides.created_at ?? now,
       now
     )
@@ -208,7 +217,7 @@ export async function createTestVouch(
   fromId: string,
   toId: string
 ): Promise<string> {
-  const id = `vch_test_${Date.now()}`;
+  const id = `vch_test_${nanoid(12)}`;
 
   await db
     .prepare(

@@ -14,6 +14,8 @@ export interface Agent {
   vouch_count: number;
   status: 'pending' | 'active' | 'suspended';
   verification_code: string | null;
+  api_key_hash: string | null;
+  api_key_prefix: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -22,6 +24,11 @@ export interface AgentCreateInput {
   moltbook_username?: string;
   public_key?: string;
   capabilities?: string[];
+}
+
+export interface AgentRegistrationResult {
+  agent: Agent;
+  apiKey: string;  // The plaintext API key (only returned once at registration)
 }
 
 export interface AgentPublic {

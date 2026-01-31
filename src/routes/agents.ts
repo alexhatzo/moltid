@@ -5,13 +5,79 @@
  */
 
 import { Hono } from 'hono';
+import { createMiddleware } from 'hono/factory';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { AgentService } from '../services/agent';
 import { TrustService } from '../services/trust';
 import type { Env } from '../types';
 
-const agentRoutes = new Hono<{ Bindings: Env }>();
+// Extended environment type with context variables for authenticated routes
+type AgentRouteEnv = {
+  Bindings: Env;
+  Variables: {
+    authenticatedAgentId: string;
+  };
+};
+
+const agentRoutes = new Hono<AgentRouteEnv>();
+
+/**
+ * Authentication middleware for agent routes.
+ * Validates API key from Authorization header against the agent ID in the route.
+ * 
+ * Requires:
+ * - Authorization header with format: "Bearer <api_key>"
+ * - Route parameter :id matching the agent the key belongs to
+ * 
+ * On success, sets `authenticatedAgentId` in context.
+ */
+const requireAgentAuth = createMiddleware<AgentRouteEnv>(async (c, next) => {
+  const authHeader = c.req.header('Authorization');
+  
+  // Check for missing Authorization header
+  if (!authHeader) {
+    return c.json({
+      success: false,
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Missing Authorization header',
+      },
+    }, 401);
+  }
+  
+  // Check for valid Bearer token format
+  if (!authHeader.startsWith('Bearer ')) {
+    return c.json({
+      success: false,
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Invalid Authorization header format. Expected: Bearer <token>',
+      },
+    }, 401);
+  }
+  
+  const token = authHeader.slice(7); // Remove "Bearer " prefix
+  const agentId = c.req.param('id');
+  
+  // Validate the API key against the agent
+  const agentService = new AgentService(c.env.DB);
+  const isValid = await agentService.validateApiKey(agentId, token);
+  
+  if (!isValid) {
+    return c.json({
+      success: false,
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Invalid or expired API key',
+      },
+    }, 401);
+  }
+  
+  // Store authenticated agent ID in context for downstream handlers
+  c.set('authenticatedAgentId', agentId);
+  await next();
+});
 
 // Validation schemas
 const createAgentSchema = z.object({
@@ -20,9 +86,15 @@ const createAgentSchema = z.object({
   capabilities: z.array(z.string()).optional(),
 });
 
+// Schema for vouch endpoint - from_agent_id is required in body
 const vouchSchema = z.object({
-  from_agent_id: z.string().min(1),
+  from_agent_id: z.string().min(1), // MoltID format: mlt_xxxxxxxxxxxx
   signature: z.string().optional(), // For future key-based auth
+});
+
+// Schema for PATCH capabilities endpoint
+const updateCapabilitiesSchema = z.object({
+  capabilities: z.array(z.string()).min(0),
 });
 
 // POST /v1/agents - Register new agent
@@ -31,8 +103,13 @@ agentRoutes.post('/', zValidator('json', createAgentSchema), async (c) => {
   const agentService = new AgentService(c.env.DB);
   
   try {
-    const agent = await agentService.create(input);
-    return c.json({ success: true, data: agent }, 201);
+    const { agent, apiKey } = await agentService.create(input);
+    return c.json({ 
+      success: true, 
+      data: agentService.toPublic(agent),
+      api_key: apiKey,
+      api_key_warning: 'Store this key securely. It will not be shown again.',
+    }, 201);
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     if (errorMessage.includes('UNIQUE constraint')) {
@@ -66,6 +143,33 @@ agentRoutes.get('/:id', async (c) => {
   }
   
   return c.json({ success: true, data: agentService.toPublic(agent) });
+});
+
+// PATCH /v1/agents/:id - Update agent capabilities (requires auth)
+agentRoutes.patch('/:id', requireAgentAuth, zValidator('json', updateCapabilitiesSchema), async (c) => {
+  const id = c.req.param('id');
+  const { capabilities } = c.req.valid('json');
+  const agentService = new AgentService(c.env.DB);
+  
+  try {
+    const updated = await agentService.updateCapabilities(id, capabilities);
+    
+    if (!updated) {
+      return c.json({ 
+        success: false, 
+        error: { code: 'not_found', message: 'Agent not found' } 
+      }, 404);
+    }
+    
+    return c.json({ success: true, data: agentService.toPublic(updated) });
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    // updateCapabilities throws validation errors - return as 400
+    return c.json({ 
+      success: false, 
+      error: { code: 'validation_error', message: errorMessage } 
+    }, 400);
+  }
 });
 
 // GET /v1/agents/moltbook/:username - Get by Moltbook username
@@ -175,11 +279,61 @@ agentRoutes.get('/:id/trust', async (c) => {
   return c.json({ success: true, data: details });
 });
 
+// POST /v1/agents/:id/rotate-key - Rotate API key (requires auth)
+agentRoutes.post('/:id/rotate-key', requireAgentAuth, async (c) => {
+  const id = c.req.param('id');
+  const agentService = new AgentService(c.env.DB);
+  
+  const result = await agentService.rotateApiKey(id);
+  
+  if (!result) {
+    return c.json({ 
+      success: false, 
+      error: { code: 'not_found', message: 'Agent not found' } 
+    }, 404);
+  }
+  
+  return c.json({
+    success: true,
+    data: agentService.toPublic(result.agent),
+    api_key: result.apiKey,
+    api_key_warning: 'Store this key securely. It will not be shown again. Your previous key has been invalidated.',
+  });
+});
+
 // POST /v1/agents/:id/vouch - Vouch for an agent
+// Requires authentication via Bearer token validated against from_agent_id
 agentRoutes.post('/:id/vouch', zValidator('json', vouchSchema), async (c) => {
   const toId = c.req.param('id');
   const { from_agent_id } = c.req.valid('json');
+  
+  // Validate auth - require Bearer token
+  const authHeader = c.req.header('Authorization');
+  if (!authHeader?.startsWith('Bearer ')) {
+    return c.json({
+      success: false,
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Missing or invalid Authorization header. Expected: Bearer <token>',
+      },
+    }, 401);
+  }
+  const token = authHeader.slice(7);
+  
   const agentService = new AgentService(c.env.DB);
+  
+  // Validate the API key against the from_agent_id
+  const isValid = await agentService.validateApiKey(from_agent_id, token);
+  if (!isValid) {
+    return c.json({
+      success: false,
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Invalid API key',
+      },
+    }, 401);
+  }
+  
   const trustService = new TrustService(c.env.DB);
   
   // Verify voucher exists and is verified
@@ -234,4 +388,4 @@ agentRoutes.post('/:id/vouch', zValidator('json', vouchSchema), async (c) => {
   }
 });
 
-export { agentRoutes };
+export { agentRoutes, requireAgentAuth };

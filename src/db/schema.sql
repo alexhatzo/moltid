@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS agents (
     vouch_count INTEGER DEFAULT 0,
     status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'suspended')),
     verification_code TEXT,
+    api_key_hash TEXT,      -- SHA-256 hash of API key (never store plaintext)
+    api_key_prefix TEXT,    -- First 16 chars of key for debugging/identification
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
 );

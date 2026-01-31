@@ -1,5 +1,40 @@
 import { nanoid } from 'nanoid';
-import type { Agent, AgentCreateInput, AgentPublic } from '../types';
+import type { Agent, AgentCreateInput, AgentPublic, AgentRegistrationResult } from '../types';
+
+/**
+ * Hash an API key using SHA-256 via Web Crypto API.
+ * Returns the hash as a hex string.
+ * @param apiKey - The plaintext API key to hash
+ * @returns Hex-encoded SHA-256 hash
+ */
+async function hashApiKey(apiKey: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(apiKey);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Timeout for Moltbook API requests (300 seconds to handle slow responses)
+const MOLTBOOK_TIMEOUT_MS = 300000;
+
+/**
+ * Fetch with timeout using AbortController
+ */
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number = MOLTBOOK_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    return response;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
 
 /**
  * AgentService handles all CRUD operations and search for MoltID agents.
@@ -9,27 +44,35 @@ export class AgentService {
   constructor(private db: D1Database) {}
 
   /**
-   * Create a new agent with auto-generated ID and verification code.
+   * Create a new agent with auto-generated ID, verification code, and API key.
    * @param input - Agent creation input (moltbook_username, public_key, capabilities)
-   * @returns The created agent
+   * @returns The created agent and plaintext API key (only returned once)
    */
-  async create(input: AgentCreateInput): Promise<Agent> {
+  async create(input: AgentCreateInput): Promise<AgentRegistrationResult> {
     const id = `mlt_${nanoid(12)}`;
     const verification_code = `moltid-verify:${id}`;
     const capabilities = JSON.stringify(input.capabilities || []);
     
+    // Generate API key in format: moltid_key_{nanoid(32)}
+    const apiKey = `moltid_key_${nanoid(32)}`;
+    const api_key_hash = await hashApiKey(apiKey);
+    const api_key_prefix = apiKey.substring(0, 16);
+    
     await this.db.prepare(`
-      INSERT INTO agents (id, moltbook_username, public_key, capabilities, verification_code)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO agents (id, moltbook_username, public_key, capabilities, verification_code, api_key_hash, api_key_prefix)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `).bind(
       id,
       input.moltbook_username || null,
       input.public_key || null,
       capabilities,
-      verification_code
+      verification_code,
+      api_key_hash,
+      api_key_prefix
     ).run();
     
-    return this.getById(id) as Promise<Agent>;
+    const agent = await this.getById(id) as Agent;
+    return { agent, apiKey };
   }
 
   /**
@@ -180,6 +223,7 @@ export class AgentService {
 
   /**
    * Verify an agent's Moltbook profile by checking for the verification code in a post.
+   * Uses Moltbook's public API: https://www.moltbook.com/skill.md
    * @param agent - The agent to verify
    * @returns Verification result with verified status and karma if successful
    */
@@ -188,71 +232,54 @@ export class AgentService {
       return { verified: false };
     }
     
+    // Use Moltbook's profile API which includes recent posts
+    const url = `https://www.moltbook.com/api/v1/agents/profile?name=${encodeURIComponent(agent.moltbook_username)}`;
+    
     try {
-      // Fetch user's karma from profile API
-      const profileResponse = await fetch(
-        `https://www.moltbook.com/api/v1/users/${agent.moltbook_username}`,
+      console.log(`Verifying Moltbook user: ${agent.moltbook_username}`);
+      console.log(`Looking for code: ${agent.verification_code}`);
+      console.log(`Fetching: ${url}`);
+      
+      const response = await fetchWithTimeout(
+        url,
         { headers: { 'User-Agent': 'MoltID/1.0' } }
       );
       
-      let karma = 0;
-      if (profileResponse.ok) {
-        const profile = await profileResponse.json() as { karma?: number };
-        karma = profile.karma || 0;
+      if (!response.ok) {
+        console.error(`Moltbook API failed with status: ${response.status}`);
+        return { verified: false };
       }
+      
+      const data = await response.json() as {
+        success: boolean;
+        agent?: { karma?: number };
+        recentPosts?: Array<{ content?: string; title?: string }>;
+      };
+      
+      if (!data.success) {
+        console.error('Moltbook API returned success: false');
+        return { verified: false };
+      }
+      
+      const karma = data.agent?.karma || 0;
+      console.log(`Agent karma: ${karma}`);
       
       // Check recent posts for verification code
-      const postsResponse = await fetch(
-        `https://www.moltbook.com/api/v1/users/${agent.moltbook_username}/posts?limit=10`,
-        { headers: { 'User-Agent': 'MoltID/1.0' } }
-      );
+      const posts = data.recentPosts || [];
+      console.log(`Checking ${posts.length} recent posts`);
       
-      if (!postsResponse.ok) {
-        // Fallback: try scraping the profile page for posts
-        return this.verifyMoltbookFallback(agent);
-      }
-      
-      const posts = await postsResponse.json() as Array<{ content?: string }>;
       for (const post of posts) {
-        if (post.content?.includes(agent.verification_code)) {
+        if (post.content?.includes(agent.verification_code) || 
+            post.title?.includes(agent.verification_code)) {
+          console.log('Verification code found in post!');
           return { verified: true, karma };
         }
       }
       
+      console.log('Verification code not found in recent posts');
       return { verified: false };
     } catch (error) {
       console.error('Moltbook verification error:', error);
-      return this.verifyMoltbookFallback(agent);
-    }
-  }
-
-  /**
-   * Fallback verification method that scrapes the Moltbook profile page for posts.
-   * Used when the API is unavailable.
-   */
-  private async verifyMoltbookFallback(agent: Agent): Promise<{ verified: boolean; karma?: number }> {
-    try {
-      // Fetch the user's posts page
-      const response = await fetch(
-        `https://www.moltbook.com/u/${agent.moltbook_username}/posts`,
-        { headers: { 'User-Agent': 'MoltID/1.0' } }
-      );
-      
-      if (!response.ok) return { verified: false };
-      
-      const html = await response.text();
-      
-      // Check if verification code appears in posts section
-      if (html.includes(agent.verification_code!)) {
-        // Try to extract karma from page
-        const karmaMatch = html.match(/karma[:\s]*(\d+)/i);
-        const karma = karmaMatch ? parseInt(karmaMatch[1]) : 0;
-        return { verified: true, karma };
-      }
-      
-      return { verified: false };
-    } catch (error) {
-      console.error('Moltbook fallback verification error:', error);
       return { verified: false };
     }
   }
@@ -276,6 +303,8 @@ export class AgentService {
       vouch_count: (r.vouch_count as number) || 0,
       status: r.status as 'pending' | 'active' | 'suspended',
       verification_code: r.verification_code as string | null,
+      api_key_hash: r.api_key_hash as string | null,
+      api_key_prefix: r.api_key_prefix as string | null,
       created_at: r.created_at as string,
       updated_at: r.updated_at as string,
     };
@@ -297,5 +326,112 @@ export class AgentService {
       status: agent.status,
       created_at: agent.created_at,
     };
+  }
+
+  /**
+   * Validate an API key for a given agent using timing-safe comparison.
+   * Prevents timing attacks by using constant-time hash comparison.
+   * @param agentId - The agent's MoltID
+   * @param apiKey - The plaintext API key to validate
+   * @returns true if the API key is valid, false otherwise
+   */
+  async validateApiKey(agentId: string, apiKey: string): Promise<boolean> {
+    const agent = await this.getById(agentId);
+    
+    // Return false if agent doesn't exist or has no API key hash
+    if (!agent || !agent.api_key_hash) {
+      return false;
+    }
+    
+    // Hash the provided API key
+    const providedHash = await hashApiKey(apiKey);
+    
+    // Use timing-safe comparison to prevent timing attacks
+    // Both hashes are hex strings of equal length (SHA-256 = 64 hex chars)
+    const encoder = new TextEncoder();
+    const storedHashBytes = encoder.encode(agent.api_key_hash);
+    const providedHashBytes = encoder.encode(providedHash);
+    
+    // Length check (should always be equal for SHA-256 hex strings)
+    if (storedHashBytes.byteLength !== providedHashBytes.byteLength) {
+      return false;
+    }
+    
+    // Constant-time comparison using Cloudflare Workers' crypto.subtle.timingSafeEqual
+    return crypto.subtle.timingSafeEqual(storedHashBytes, providedHashBytes);
+  }
+
+  /**
+   * Rotate an agent's API key, generating a new one and invalidating the old.
+   * @param id - The agent's MoltID
+   * @returns Object containing the updated agent and new plaintext API key, or null if agent not found
+   */
+  async rotateApiKey(id: string): Promise<{ agent: Agent; apiKey: string } | null> {
+    // Check if agent exists
+    const agent = await this.getById(id);
+    if (!agent) {
+      return null;
+    }
+    
+    // Generate new API key in the same format
+    const apiKey = `moltid_key_${nanoid(32)}`;
+    const api_key_hash = await hashApiKey(apiKey);
+    const api_key_prefix = apiKey.substring(0, 16);
+    
+    // Update the agent's API key in the database
+    await this.db.prepare(`
+      UPDATE agents SET api_key_hash = ?, api_key_prefix = ?, updated_at = ? WHERE id = ?
+    `).bind(api_key_hash, api_key_prefix, new Date().toISOString(), id).run();
+    
+    // Fetch and return the updated agent with the new plaintext key
+    const updatedAgent = await this.getById(id) as Agent;
+    return { agent: updatedAgent, apiKey };
+  }
+
+  /**
+   * Update an agent's capabilities with validation.
+   * @param id - The agent's MoltID
+   * @param capabilities - Array of capability strings to set
+   * @returns The updated agent or null if not found
+   * @throws Error if validation fails (max 20 items, lowercase a-z0-9_ only, max 50 chars each, no duplicates)
+   */
+  async updateCapabilities(id: string, capabilities: string[]): Promise<Agent | null> {
+    // Validation: max 20 items
+    if (capabilities.length > 20) {
+      throw new Error('Capabilities array cannot exceed 20 items');
+    }
+    
+    // Validation regex: lowercase a-z, digits 0-9, underscore only
+    const validCapabilityPattern = /^[a-z0-9_]+$/;
+    
+    for (const capability of capabilities) {
+      // Validation: max 50 characters
+      if (capability.length > 50) {
+        throw new Error(`Capability "${capability}" exceeds maximum length of 50 characters`);
+      }
+      
+      // Validation: allowed characters only
+      if (!validCapabilityPattern.test(capability)) {
+        throw new Error(`Capability "${capability}" contains invalid characters. Only lowercase a-z, digits 0-9, and underscore are allowed`);
+      }
+    }
+    
+    // Validation: no duplicates
+    const uniqueCapabilities = new Set(capabilities);
+    if (uniqueCapabilities.size !== capabilities.length) {
+      throw new Error('Capabilities array contains duplicates');
+    }
+    
+    // Check if agent exists
+    const agent = await this.getById(id);
+    if (!agent) {
+      return null;
+    }
+    
+    // Update capabilities using the existing update method
+    await this.update(id, { capabilities });
+    
+    // Return the updated agent
+    return await this.getById(id);
   }
 }
