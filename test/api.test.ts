@@ -44,16 +44,32 @@ interface RootResponse {
 }
 
 /**
+ * Hash an API key using SHA-256 (matching the production hash function)
+ */
+async function hashApiKey(apiKey: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(apiKey);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
  * Helper to make HTTP requests to the Hono app
  */
 async function request(
   method: string,
   path: string,
-  body?: unknown
+  body?: unknown,
+  options?: { headers?: Record<string, string> }
 ): Promise<Response> {
+  const headers: Record<string, string> = { 
+    'Content-Type': 'application/json',
+    ...options?.headers,
+  };
   const init: RequestInit = {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers,
   };
   if (body) {
     init.body = JSON.stringify(body);
@@ -497,39 +513,48 @@ describe('API Integration Tests', () => {
   // ============================================================
   describe('POST /v1/agents/:id/vouch', () => {
     it('vouch succeeds (200)', async () => {
-      // Create verified voucher
-      const voucherId = await createTestAgent(env.DB, {
-        id: 'mlt_voucher_test',
-        moltbook_username: 'voucher_user',
-        moltbook_verified: true,
-        status: 'active',
-      });
+     // Create verified voucher with API key
+     const voucherApiKey = 'moltid_key_testvoucher12345678901234';
+     const voucherKeyHash = await hashApiKey(voucherApiKey);
+     const voucherId = await createTestAgent(env.DB, {
+       id: 'mlt_voucher_test',
+       moltbook_username: 'voucher_user',
+       moltbook_verified: true,
+       status: 'active',
+       api_key_hash: voucherKeyHash,
+       api_key_prefix: voucherApiKey.substring(0, 16),
+     });
 
-      // Create target agent
-      const targetId = await createTestAgent(env.DB, {
-        id: 'mlt_target_test',
-        moltbook_username: 'target_user',
-        moltbook_verified: false,
-        status: 'active',
-      });
+     // Create target agent
+     const targetId = await createTestAgent(env.DB, {
+       id: 'mlt_target_test',
+       moltbook_username: 'target_user',
+       moltbook_verified: false,
+       status: 'active',
+     });
 
-      const res = await request('POST', `/v1/agents/${targetId}/vouch`, {
-        from_agent_id: voucherId,
-      });
+     // Authenticate as the voucher (from_agent_id no longer in body)
+     const res = await request('POST', `/v1/agents/${targetId}/vouch`, {}, {
+       headers: { 'Authorization': `Bearer ${voucherApiKey}` },
+     });
 
-      expect(res.status).toBe(200);
-      const json = await res.json() as ApiResponse<VouchResponse>;
-      expect(json.success).toBe(true);
-      expect(json.data!.vouch_added).toBe(true);
-      expect(typeof json.data!.new_trust_score).toBe('number');
-    });
+     expect(res.status).toBe(200);
+     const json = await res.json() as ApiResponse<VouchResponse>;
+     expect(json.success).toBe(true);
+     expect(json.data!.vouch_added).toBe(true);
+     expect(typeof json.data!.new_trust_score).toBe('number');
+   });
 
     it('only verified agents can vouch (403)', async () => {
-      // Create unverified voucher
+      // Create unverified voucher with API key
+      const unverifiedApiKey = 'moltid_key_unverified0000000000000';
+      const unverifiedKeyHash = await hashApiKey(unverifiedApiKey);
       const unverifiedId = await createTestAgent(env.DB, {
         id: 'mlt_unverified_voucher',
         moltbook_verified: false,
         status: 'active',
+        api_key_hash: unverifiedKeyHash,
+        api_key_prefix: unverifiedApiKey.substring(0, 16),
       });
 
       // Create target agent
@@ -538,8 +563,9 @@ describe('API Integration Tests', () => {
         status: 'active',
       });
 
-      const res = await request('POST', `/v1/agents/${targetId}/vouch`, {
-        from_agent_id: unverifiedId,
+      // Authenticate as the unverified voucher
+      const res = await request('POST', `/v1/agents/${targetId}/vouch`, {}, {
+        headers: { 'Authorization': `Bearer ${unverifiedApiKey}` },
       });
 
       expect(res.status).toBe(403);
@@ -550,15 +576,20 @@ describe('API Integration Tests', () => {
     });
 
     it('cannot vouch for self (400)', async () => {
-      // Create verified agent
+      // Create verified agent with API key
+      const selfApiKey = 'moltid_key_selfvoucher0000000000000';
+      const selfKeyHash = await hashApiKey(selfApiKey);
       const agentId = await createTestAgent(env.DB, {
         id: 'mlt_self_voucher',
         moltbook_verified: true,
         status: 'active',
+        api_key_hash: selfKeyHash,
+        api_key_prefix: selfApiKey.substring(0, 16),
       });
 
-      const res = await request('POST', `/v1/agents/${agentId}/vouch`, {
-        from_agent_id: agentId,
+      // Try to vouch for yourself by authenticating as yourself
+      const res = await request('POST', `/v1/agents/${agentId}/vouch`, {}, {
+        headers: { 'Authorization': `Bearer ${selfApiKey}` },
       });
 
       expect(res.status).toBe(400);
@@ -569,11 +600,15 @@ describe('API Integration Tests', () => {
     });
 
     it('duplicate vouch returns 409', async () => {
-      // Create verified voucher
+      // Create verified voucher with API key
+      const dupVoucherApiKey = 'moltid_key_dupvoucher00000000000000';
+      const dupVoucherKeyHash = await hashApiKey(dupVoucherApiKey);
       const voucherId = await createTestAgent(env.DB, {
         id: 'mlt_dup_voucher',
         moltbook_verified: true,
         status: 'active',
+        api_key_hash: dupVoucherKeyHash,
+        api_key_prefix: dupVoucherApiKey.substring(0, 16),
       });
 
       // Create target agent
@@ -583,13 +618,13 @@ describe('API Integration Tests', () => {
       });
 
       // First vouch
-      await request('POST', `/v1/agents/${targetId}/vouch`, {
-        from_agent_id: voucherId,
+      await request('POST', `/v1/agents/${targetId}/vouch`, {}, {
+        headers: { 'Authorization': `Bearer ${dupVoucherApiKey}` },
       });
 
       // Second vouch (duplicate)
-      const res = await request('POST', `/v1/agents/${targetId}/vouch`, {
-        from_agent_id: voucherId,
+      const res = await request('POST', `/v1/agents/${targetId}/vouch`, {}, {
+        headers: { 'Authorization': `Bearer ${dupVoucherApiKey}` },
       });
 
       expect(res.status).toBe(409);
@@ -599,15 +634,19 @@ describe('API Integration Tests', () => {
     });
 
     it('returns 404 for nonexistent target agent', async () => {
-      // Create verified voucher
-      const voucherId = await createTestAgent(env.DB, {
+      // Create verified voucher with API key
+      const voucher404ApiKey = 'moltid_key_voucher404000000000000';
+      const voucher404KeyHash = await hashApiKey(voucher404ApiKey);
+      await createTestAgent(env.DB, {
         id: 'mlt_voucher_404',
         moltbook_verified: true,
         status: 'active',
+        api_key_hash: voucher404KeyHash,
+        api_key_prefix: voucher404ApiKey.substring(0, 16),
       });
 
-      const res = await request('POST', '/v1/agents/mlt_nonexistent_999/vouch', {
-        from_agent_id: voucherId,
+      const res = await request('POST', '/v1/agents/mlt_nonexistent_999/vouch', {}, {
+        headers: { 'Authorization': `Bearer ${voucher404ApiKey}` },
       });
 
       expect(res.status).toBe(404);
@@ -616,29 +655,34 @@ describe('API Integration Tests', () => {
       expect(json.error.code).toBe('not_found');
     });
 
-    it('returns 403 for nonexistent voucher', async () => {
+    it('returns 401 for invalid API key', async () => {
       // Create target agent
       const targetId = await createTestAgent(env.DB, {
         id: 'mlt_target_no_voucher',
         status: 'active',
       });
 
-      const res = await request('POST', `/v1/agents/${targetId}/vouch`, {
-        from_agent_id: 'mlt_nonexistent_voucher',
+      // Try with an invalid API key
+      const res = await request('POST', `/v1/agents/${targetId}/vouch`, {}, {
+        headers: { 'Authorization': 'Bearer moltid_key_invalidkey0000000000000' },
       });
 
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(401);
       const json = await res.json() as ErrorResponse;
       expect(json.success).toBe(false);
-      expect(json.error.code).toBe('unauthorized');
+      expect(json.error.code).toBe('UNAUTHORIZED');
     });
 
     it('updates trust score after vouch', async () => {
-      // Create verified voucher
-      const voucherId = await createTestAgent(env.DB, {
+      // Create verified voucher with API key
+      const scoreVoucherApiKey = 'moltid_key_scorevoucher00000000000';
+      const scoreVoucherKeyHash = await hashApiKey(scoreVoucherApiKey);
+      await createTestAgent(env.DB, {
         id: 'mlt_score_voucher',
         moltbook_verified: true,
         status: 'active',
+        api_key_hash: scoreVoucherKeyHash,
+        api_key_prefix: scoreVoucherApiKey.substring(0, 16),
       });
 
       // Create target agent
@@ -655,9 +699,9 @@ describe('API Integration Tests', () => {
       const beforeJson = await beforeRes.json() as ApiResponse<TrustDetails>;
       const beforeScore = beforeJson.data!.score;
 
-      // Add vouch
-      const vouchRes = await request('POST', `/v1/agents/${targetId}/vouch`, {
-        from_agent_id: voucherId,
+      // Add vouch (authenticated as the voucher)
+      const vouchRes = await request('POST', `/v1/agents/${targetId}/vouch`, {}, {
+        headers: { 'Authorization': `Bearer ${scoreVoucherApiKey}` },
       });
       const vouchJson = await vouchRes.json() as ApiResponse<VouchResponse>;
 

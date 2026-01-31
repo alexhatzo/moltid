@@ -79,6 +79,62 @@ const requireAgentAuth = createMiddleware<AgentRouteEnv>(async (c, next) => {
   await next();
 });
 
+/**
+ * Flexible authentication middleware that looks up the agent by API key.
+ * Unlike requireAgentAuth, this doesn't require the agent ID in the route.
+ * Used for endpoints where the caller authenticates as any agent (e.g., vouch).
+ * 
+ * Requires:
+ * - Authorization header with format: "Bearer <api_key>"
+ * 
+ * On success, sets `authenticatedAgentId` in context to the agent owning the key.
+ */
+const requireApiKeyAuth = createMiddleware<AgentRouteEnv>(async (c, next) => {
+  const authHeader = c.req.header('Authorization');
+  
+  // Check for missing Authorization header
+  if (!authHeader) {
+    return c.json({
+      success: false,
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Missing Authorization header',
+      },
+    }, 401);
+  }
+  
+  // Check for valid Bearer token format
+  if (!authHeader.startsWith('Bearer ')) {
+    return c.json({
+      success: false,
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Invalid Authorization header format. Expected: Bearer <token>',
+      },
+    }, 401);
+  }
+  
+  const token = authHeader.slice(7); // Remove "Bearer " prefix
+  
+  // Look up the agent by API key
+  const agentService = new AgentService(c.env.DB);
+  const agent = await agentService.getByApiKey(token);
+  
+  if (!agent) {
+    return c.json({
+      success: false,
+      error: {
+        code: 'UNAUTHORIZED',
+        message: 'Invalid or expired API key',
+      },
+    }, 401);
+  }
+  
+  // Store authenticated agent ID in context for downstream handlers
+  c.set('authenticatedAgentId', agent.id);
+  await next();
+});
+
 // Validation schemas
 const createAgentSchema = z.object({
   moltbook_username: z.string().min(1).max(64).optional(),
@@ -86,9 +142,15 @@ const createAgentSchema = z.object({
   capabilities: z.array(z.string()).optional(),
 });
 
+// Schema for vouch endpoint - from_agent_id now comes from authenticated context
+// BREAKING CHANGE: from_agent_id removed from body, now derived from auth
 const vouchSchema = z.object({
-  from_agent_id: z.string().min(1),
   signature: z.string().optional(), // For future key-based auth
+});
+
+// Schema for PATCH capabilities endpoint
+const updateCapabilitiesSchema = z.object({
+  capabilities: z.array(z.string()).min(0),
 });
 
 // POST /v1/agents - Register new agent
@@ -137,6 +199,33 @@ agentRoutes.get('/:id', async (c) => {
   }
   
   return c.json({ success: true, data: agentService.toPublic(agent) });
+});
+
+// PATCH /v1/agents/:id - Update agent capabilities (requires auth)
+agentRoutes.patch('/:id', requireAgentAuth, zValidator('json', updateCapabilitiesSchema), async (c) => {
+  const id = c.req.param('id');
+  const { capabilities } = c.req.valid('json');
+  const agentService = new AgentService(c.env.DB);
+  
+  try {
+    const updated = await agentService.updateCapabilities(id, capabilities);
+    
+    if (!updated) {
+      return c.json({ 
+        success: false, 
+        error: { code: 'not_found', message: 'Agent not found' } 
+      }, 404);
+    }
+    
+    return c.json({ success: true, data: agentService.toPublic(updated) });
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    // updateCapabilities throws validation errors - return as 400
+    return c.json({ 
+      success: false, 
+      error: { code: 'validation_error', message: errorMessage } 
+    }, 400);
+  }
 });
 
 // GET /v1/agents/moltbook/:username - Get by Moltbook username
@@ -247,9 +336,12 @@ agentRoutes.get('/:id/trust', async (c) => {
 });
 
 // POST /v1/agents/:id/vouch - Vouch for an agent
-agentRoutes.post('/:id/vouch', zValidator('json', vouchSchema), async (c) => {
+// BREAKING CHANGE (v1.1): Requires authentication. from_agent_id is now derived from
+// the authenticated agent, not from request body. The :id param is the agent being vouched for.
+agentRoutes.post('/:id/vouch', requireApiKeyAuth, zValidator('json', vouchSchema), async (c) => {
   const toId = c.req.param('id');
-  const { from_agent_id } = c.req.valid('json');
+  // from_agent_id is now derived from authenticated context (BREAKING CHANGE)
+  const from_agent_id = c.get('authenticatedAgentId');
   const agentService = new AgentService(c.env.DB);
   const trustService = new TrustService(c.env.DB);
   
@@ -305,4 +397,4 @@ agentRoutes.post('/:id/vouch', zValidator('json', vouchSchema), async (c) => {
   }
 });
 
-export { agentRoutes, requireAgentAuth };
+export { agentRoutes, requireAgentAuth, requireApiKeyAuth };
