@@ -279,6 +279,28 @@ agentRoutes.get('/:id/trust', async (c) => {
   return c.json({ success: true, data: details });
 });
 
+// POST /v1/agents/:id/rotate-key - Rotate API key (requires auth)
+agentRoutes.post('/:id/rotate-key', requireAgentAuth, async (c) => {
+  const id = c.req.param('id');
+  const agentService = new AgentService(c.env.DB);
+  
+  const result = await agentService.rotateApiKey(id);
+  
+  if (!result) {
+    return c.json({ 
+      success: false, 
+      error: { code: 'not_found', message: 'Agent not found' } 
+    }, 404);
+  }
+  
+  return c.json({
+    success: true,
+    data: agentService.toPublic(result.agent),
+    api_key: result.apiKey,
+    api_key_warning: 'Store this key securely. It will not be shown again. Your previous key has been invalidated.',
+  });
+});
+
 // POST /v1/agents/:id/vouch - Vouch for an agent
 // Requires authentication via Bearer token validated against from_agent_id
 agentRoutes.post('/:id/vouch', zValidator('json', vouchSchema), async (c) => {

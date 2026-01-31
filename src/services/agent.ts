@@ -362,6 +362,33 @@ export class AgentService {
   }
 
   /**
+   * Rotate an agent's API key, generating a new one and invalidating the old.
+   * @param id - The agent's MoltID
+   * @returns Object containing the updated agent and new plaintext API key, or null if agent not found
+   */
+  async rotateApiKey(id: string): Promise<{ agent: Agent; apiKey: string } | null> {
+    // Check if agent exists
+    const agent = await this.getById(id);
+    if (!agent) {
+      return null;
+    }
+    
+    // Generate new API key in the same format
+    const apiKey = `moltid_key_${nanoid(32)}`;
+    const api_key_hash = await hashApiKey(apiKey);
+    const api_key_prefix = apiKey.substring(0, 16);
+    
+    // Update the agent's API key in the database
+    await this.db.prepare(`
+      UPDATE agents SET api_key_hash = ?, api_key_prefix = ?, updated_at = ? WHERE id = ?
+    `).bind(api_key_hash, api_key_prefix, new Date().toISOString(), id).run();
+    
+    // Fetch and return the updated agent with the new plaintext key
+    const updatedAgent = await this.getById(id) as Agent;
+    return { agent: updatedAgent, apiKey };
+  }
+
+  /**
    * Update an agent's capabilities with validation.
    * @param id - The agent's MoltID
    * @param capabilities - Array of capability strings to set
